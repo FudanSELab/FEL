@@ -5,22 +5,10 @@
 
 package com.yahoo.semsearch.fastlinking.io;
 
-import java.io.BufferedWriter;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.net.URLEncoder;
-
-import org.apache.commons.cli.CommandLine;
-import org.apache.commons.cli.CommandLineParser;
-import org.apache.commons.cli.GnuParser;
-import org.apache.commons.cli.HelpFormatter;
-import org.apache.commons.cli.OptionBuilder;
-import org.apache.commons.cli.Options;
-import org.apache.commons.cli.ParseException;
+import edu.umd.cloud9.io.map.HMapSIW;
+import org.apache.commons.cli.*;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.conf.Configured;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IntWritable;
@@ -30,68 +18,117 @@ import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
-import edu.umd.cloud9.io.map.HMapSIW;
+import java.io.BufferedWriter;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.net.URLEncoder;
 
+/**
+ * 运行参数样例
+ * hadoop \
+ * jar target/FEL-0.1.0.jar \
+ * com.yahoo.semsearch.fastlinking.io.Datapack \
+ * -amap wiki/${WIKI_MARKET}/${WIKI_DATE}/anchors.map \
+ * -cfmap wiki/${WIKI_MARKET}/${WIKI_DATE}/alias-entity-counts.map \
+ * -multi true \
+ * -output ${WORKING_DIR}/${WIKI_MARKET}/${WIKI_DATE}/alias-entity-counts
+ * <p>
+ * # copy to hdfs
+ * hadoop dfs -copyFromLocal \
+ * ${WORKING_DIR}/${WIKI_MARKET}/${WIKI_DATE}/alias-entity-counts.dat \
+ * wiki/${WIKI_MARKET}/${WIKI_DATE}/
+ * <p>
+ * # copy to hdfs
+ * hadoop dfs -copyFromLocal \
+ * ${WORKING_DIR}/${WIKI_MARKET}/${WIKI_DATE}/alias-entity-counts.tsv \
+ * wiki/${WIKI_MARKET}/${WIKI_DATE}/
+ * <p>
+ * # create directory
+ * hadoop dfs -mkdir -p \
+ * wiki/${WIKI_MARKET}/${WIKI_DATE}/feat/alias-entity/count
+ * <p>
+ * # copy counts
+ * hadoop dfs -copyFromLocal ${WORKING_DIR}/${WIKI_MARKET}/${WIKI_DATE}/alias-entity-counts.tsv \
+ * wiki/${WIKI_MARKET}/${WIKI_DATE}/feat/alias-entity/count
+ * <p>
+ * # set numerical id
+ * hadoop dfs -text wiki/${WIKI_MARKET}/${WIKI_DATE}/feat/alias-entity/count/* | \
+ * cut --fields 4 | \
+ * LC_ALL=C sort --dictionary-order | \
+ * LC_ALL=C uniq | \
+ * awk '{print $0"\t"NR}' | \
+ * hadoop dfs -put - wiki/${WIKI_MARKET}/${WIKI_DATE}/id-entity.tsv
+ */
 public class Datapack extends Configured implements Tool {
 
     static final String outputEncoding = "UTF-8";
-    private static final String SEPARATOR = Character.toString( '\u0001' );
+    private static final String SEPARATOR = Character.toString('\u0001');
 
     private static final String OUTPUT_OPTION = "output";
     private static final String MULTI_OUTPUT_OPTION = "multi";
     private static final String ANCHORMAP_OPTION = "amap";
     private static final String CFMAP_OPTION = "cfmap";
-    private static final String NGRAM_OPTION = "ngram";
+    private static final String NGRAM_OPTION = "ngram";//很在意，是不是就在这里生成了一个别名的ngram别名组，这是一个可选参数，就是之前说的，如果不对别名进行ngram划分，抽取出子别名，也是可以work。但是有ngram就能对不完整的子别名进行匹配了。
 
     @Override
-    @SuppressWarnings( "static-access" )
-    public int run( String[] args ) throws Exception {
+    @SuppressWarnings("static-access")
+    public int run(String[] args) throws Exception {
         Options options = new Options();
-        options.addOption( OptionBuilder.withArgName( "path" ).hasArg().withDescription( "output" ).create( OUTPUT_OPTION ) );
-        options.addOption( OptionBuilder.withArgName( "path" ).hasArg().withDescription( "multi-output" ).create( MULTI_OUTPUT_OPTION ) );
-        options.addOption( OptionBuilder.withArgName( "path" ).hasArg().withDescription( "output for anchor map" ).create( ANCHORMAP_OPTION ) );
-        options.addOption( OptionBuilder.withArgName( "path" ).hasArg().withDescription( "output for anchor cf map" ).create( CFMAP_OPTION ) );
-        options.addOption( OptionBuilder.withArgName( "ngram" ).hasArg().withDescription( "chunk into ngram" ).create( NGRAM_OPTION ) );
+        options.addOption(OptionBuilder.withArgName("path").hasArg().withDescription("output").create(OUTPUT_OPTION));
+        options.addOption(OptionBuilder.withArgName("path").hasArg().withDescription("multi-output").create(MULTI_OUTPUT_OPTION));
+        options.addOption(OptionBuilder.withArgName("path").hasArg().withDescription("output for anchor map").create(ANCHORMAP_OPTION));
+        options.addOption(OptionBuilder.withArgName("path").hasArg().withDescription("output for anchor cf map").create(CFMAP_OPTION));
+        options.addOption(OptionBuilder.withArgName("ngram").hasArg().withDescription("chunk into ngram").create(NGRAM_OPTION));
 
         CommandLine cmdline;
         CommandLineParser parser = new GnuParser();
         try {
-            cmdline = parser.parse( options, args );
-        } catch( ParseException exp ) {
-            System.err.println( "Error parsing command line: " + exp.getMessage() );
+            cmdline = parser.parse(options, args);
+        } catch (ParseException exp) {
+            System.err.println("Error parsing command line: " + exp.getMessage());
             return -1;
         }
 
-        if( !cmdline.hasOption( OUTPUT_OPTION ) || !cmdline.hasOption( ANCHORMAP_OPTION ) || !cmdline.hasOption( CFMAP_OPTION ) ) {
+        if (!cmdline.hasOption(OUTPUT_OPTION) || !cmdline.hasOption(ANCHORMAP_OPTION) || !cmdline.hasOption(CFMAP_OPTION)) {
             HelpFormatter formatter = new HelpFormatter();
-            formatter.printHelp( this.getClass().getName(), options );
-            ToolRunner.printGenericCommandUsage( System.out );
+            formatter.printHelp(this.getClass().getName(), options);
+            ToolRunner.printGenericCommandUsage(System.out);
             return -1;
         }
 
-        merge( cmdline.getOptionValue( ANCHORMAP_OPTION ), cmdline.getOptionValue( CFMAP_OPTION ), cmdline.getOptionValue( MULTI_OUTPUT_OPTION ), cmdline.getOptionValue( OUTPUT_OPTION ), cmdline.getOptionValue(
-                NGRAM_OPTION ) );
+        merge(cmdline.getOptionValue(ANCHORMAP_OPTION), cmdline.getOptionValue(CFMAP_OPTION), cmdline.getOptionValue(MULTI_OUTPUT_OPTION), cmdline.getOptionValue(OUTPUT_OPTION), cmdline.getOptionValue(
+                NGRAM_OPTION));
 
         return 0;
     }
 
-    private void merge( String anchorMapPath, String dfMapPath, String multiple_out, String out, String ngram ) throws IOException {
+    /**
+     * @param anchorMapPath wiki/${WIKI_MARKET}/${WIKI_DATE}/anchors.map
+     * @param dfMapPath     wiki/${WIKI_MARKET}/${WIKI_DATE}/alias-entity-counts.map 实际上就是一个别名和实体的map---alias-entity-counts.map
+     * @param multiple_out  是否要输出tsv格式的数据
+     * @param out           输出目录
+     * @param ngram         是否要进行ngram 处理
+     * @throws IOException
+     */
+    private void merge(String anchorMapPath, String dfMapPath, String multiple_out, String out, String ngram) throws IOException {
 
-        JobConf conf = new JobConf( getConf(), Datapack.class );
-        FileSystem fs = FileSystem.get( conf );
+        JobConf conf = new JobConf(getConf(), Datapack.class);
+        FileSystem fs = FileSystem.get(conf);
 
         BufferedWriter anchorsDataOut;
         BufferedWriter anchorsTSVOut;
 
-        Boolean multiple_output = ( multiple_out != null && multiple_out.equalsIgnoreCase( "true" ) );
-        Boolean ngram_output = ( ngram != null && ngram.equalsIgnoreCase( "true" ) );
-
-        if( !multiple_output ) {
-            anchorsDataOut = new BufferedWriter( new OutputStreamWriter( new FileOutputStream( out ), outputEncoding ) );
+        Boolean multiple_output = (multiple_out != null && multiple_out.equalsIgnoreCase("true"));
+        //判断是否需要ngram的输出
+        Boolean ngram_output = (ngram != null && ngram.equalsIgnoreCase("true"));
+        //multiple_output决定了是否只输出dat文件还是dat文件和.tsv文件都进行输出
+        if (!multiple_output) {
+            anchorsDataOut = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(out), outputEncoding));
             anchorsTSVOut = null;
         } else {
-            anchorsDataOut = new BufferedWriter( new OutputStreamWriter( new FileOutputStream( out + ".dat" ), outputEncoding ) );
-            anchorsTSVOut = new BufferedWriter( new OutputStreamWriter( new FileOutputStream( out + ".tsv" ), outputEncoding ) );
+            anchorsDataOut = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(out + ".dat"), outputEncoding));
+            anchorsTSVOut = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(out + ".tsv"), outputEncoding));
         }
 
         // Loop over anchors
@@ -103,121 +140,121 @@ public class Datapack extends Configured implements Tool {
             if( !fileStatus.getPath().toString().contains( "part-" )) continue;
             MapFile.Reader dfMapReader = new MapFile.Reader( fileStatus.getPath(), conf );
 */
-            Text akey = new Text();
-            Text dkey = new Text();
-            IntWritable df = new IntWritable();
-            HMapSIW map = new HMapSIW();
+        Text akey = new Text();
+        Text dkey = new Text();
+        IntWritable df = new IntWritable();
+        HMapSIW map = new HMapSIW();
 
-		while (anchorMapReader.next(akey, map)) {
+        while (anchorMapReader.next(akey, map)) {
 
-			// since they are both sorted we can just iterate over both
-			// TODO if need be, artificially add a 0 count to unseen anchors
-			dfMapReader.next(dkey, df);
-			while (!akey.toString().equalsIgnoreCase(dkey.toString())) {
-				//System.err.println("Mismatch: '" + akey + "' and '" + dkey + "'");
-				anchorMapReader.next(akey, map);
-			}
-			String l = akey.toString();
+            // since they are both sorted we can just iterate over both
+            // TODO if need be, artificially add a 0 count to unseen anchors
+            dfMapReader.next(dkey, df);
+            while (!akey.toString().equalsIgnoreCase(dkey.toString())) {
+                //System.err.println("Mismatch: '" + akey + "' and '" + dkey + "'");
+                anchorMapReader.next(akey, map);
+            }
+            String l = akey.toString();
 
 //            while( dfMapReader.next( dkey, df ) ) {
 
-  //              String l = dkey.toString();
-                if (l.trim().length() < 2)
-                	continue;
+            //              String l = dkey.toString();
+            if (l.trim().length() < 2)
+                continue;
 
-                StringBuilder targets = new StringBuilder();
-                int total = 0;
-                for( String target : map.keySet() ) {
+            StringBuilder targets = new StringBuilder();
+            int total = 0;
+            for (String target : map.keySet()) {
 
-                    int count = map.get( target );
-                    total += count;
+                int count = map.get(target);
+                total += count;
 
-                    String entity = URLEncoder.encode( target.replaceAll( " ", "_" ), "UTF-8" );
+                String entity = URLEncoder.encode(target.replaceAll(" ", "_"), "UTF-8");
 
-                    targets.append( entity );
-                    targets.append( SEPARATOR );
-                    targets.append( Integer.toString( count ) );
-                    targets.append( "\t" );
+                targets.append(entity);
+                targets.append(SEPARATOR);
+                targets.append(Integer.toString(count));
+                targets.append("\t");
 
-                }
+            }
 
-                if( StringUtils.isNumeric( l ) && total < 2 ) continue;
+            if (StringUtils.isNumeric(l) && total < 2) continue;
 
-                
+
 //System.err.println("targets " + targets);
-                if( targets.length() < 2) continue;
-                if( !ngram_output ) {
-                    anchorsDataOut.write( l );
-                    anchorsDataOut.write( SEPARATOR );
-                    anchorsDataOut.write( Integer.toString( df.get() ) );
-                    anchorsDataOut.write( SEPARATOR );
-                    anchorsDataOut.write( Integer.toString( total ) );
-                    anchorsDataOut.write( "\t" );
-                    anchorsDataOut.write( targets.substring( 0, targets.length() - 1 ) );
-                    anchorsDataOut.write( "\n" );
-                    anchorsDataOut.flush();
+            if (targets.length() < 2) continue;
+            if (!ngram_output) {
+                anchorsDataOut.write(l);
+                anchorsDataOut.write(SEPARATOR);
+                anchorsDataOut.write(Integer.toString(df.get()));
+                anchorsDataOut.write(SEPARATOR);
+                anchorsDataOut.write(Integer.toString(total));
+                anchorsDataOut.write("\t");
+                anchorsDataOut.write(targets.substring(0, targets.length() - 1));
+                anchorsDataOut.write("\n");
+                anchorsDataOut.flush();
 
-                    if( multiple_output ) {
-                        for( String target : map.keySet() ) {
-                            int count = map.get( target );
-                            String entity = URLEncoder.encode( target.replaceAll( " ", "_" ), "UTF-8" );
-                            anchorsTSVOut.write( l );
-                            anchorsTSVOut.write( "\t" );
-                            anchorsTSVOut.write( Integer.toString( df.get() ) );
-                            anchorsTSVOut.write( "\t" );
-                            anchorsTSVOut.write( Integer.toString( total ) );
-                            anchorsTSVOut.write( "\t" );
-                            anchorsTSVOut.write( entity );
-                            anchorsTSVOut.write( "\t" );
-                            anchorsTSVOut.write( Integer.toString( count ) );
-                            anchorsTSVOut.write( "\n" );
-                            anchorsTSVOut.flush();
-                        }
+                if (multiple_output) {
+                    for (String target : map.keySet()) {
+                        int count = map.get(target);
+                        String entity = URLEncoder.encode(target.replaceAll(" ", "_"), "UTF-8");
+                        anchorsTSVOut.write(l);
+                        anchorsTSVOut.write("\t");
+                        anchorsTSVOut.write(Integer.toString(df.get()));
+                        anchorsTSVOut.write("\t");
+                        anchorsTSVOut.write(Integer.toString(total));
+                        anchorsTSVOut.write("\t");
+                        anchorsTSVOut.write(entity);
+                        anchorsTSVOut.write("\t");
+                        anchorsTSVOut.write(Integer.toString(count));
+                        anchorsTSVOut.write("\n");
+                        anchorsTSVOut.flush();
                     }
-                } else {
-                    String parts[] = l.split( "\\s+" );
-                    for( int i = 0; i < parts.length; i++ ) {
-                        StringBuilder sb = new StringBuilder();
-                        for( int j = i; j < parts.length; j++ ) {
-                            sb.append( parts[ j ] );
-                            String ss = sb.toString();
-                            anchorsDataOut.write( ss );
-                            anchorsDataOut.write( SEPARATOR );
-                            anchorsDataOut.write( Integer.toString( df.get() ) );
-                            anchorsDataOut.write( SEPARATOR );
-                            anchorsDataOut.write( Integer.toString( total ) );
-                            anchorsDataOut.write( "\t" );
-                            anchorsDataOut.write( targets.substring( 0, targets.length() - 1 ) );
-                            anchorsDataOut.write( "\n" );
-                            anchorsDataOut.flush();
-                            if( multiple_output ) {
-                                for( String target : map.keySet() ) {
-                                    int count = map.get( target );
-                                    String entity = URLEncoder.encode( target.replaceAll( " ", "_" ), "UTF-8" );
-                                    anchorsTSVOut.write( ss );
-                                    anchorsTSVOut.write( "\t" );
-                                    anchorsTSVOut.write( Integer.toString( df.get() ) );
-                                    anchorsTSVOut.write( "\t" );
-                                    anchorsTSVOut.write( Integer.toString( total ) );
-                                    anchorsTSVOut.write( "\t" );
-                                    anchorsTSVOut.write( entity );
-                                    anchorsTSVOut.write( "\t" );
-                                    anchorsTSVOut.write( Integer.toString( count ) );
-                                    anchorsTSVOut.write( "\n" );
-                                    anchorsTSVOut.flush();
-                                }
-                                sb.append( " " );
+                }
+            } else {
+                String parts[] = l.split("\\s+");
+                for (int i = 0; i < parts.length; i++) {
+                    StringBuilder sb = new StringBuilder();
+                    for (int j = i; j < parts.length; j++) {
+                        sb.append(parts[j]);
+                        String ss = sb.toString();
+                        anchorsDataOut.write(ss);
+                        anchorsDataOut.write(SEPARATOR);
+                        anchorsDataOut.write(Integer.toString(df.get()));
+                        anchorsDataOut.write(SEPARATOR);
+                        anchorsDataOut.write(Integer.toString(total));
+                        anchorsDataOut.write("\t");
+                        anchorsDataOut.write(targets.substring(0, targets.length() - 1));
+                        anchorsDataOut.write("\n");
+                        anchorsDataOut.flush();
+                        if (multiple_output) {
+                            for (String target : map.keySet()) {
+                                int count = map.get(target);
+                                String entity = URLEncoder.encode(target.replaceAll(" ", "_"), "UTF-8");
+                                anchorsTSVOut.write(ss);
+                                anchorsTSVOut.write("\t");
+                                anchorsTSVOut.write(Integer.toString(df.get()));
+                                anchorsTSVOut.write("\t");
+                                anchorsTSVOut.write(Integer.toString(total));
+                                anchorsTSVOut.write("\t");
+                                anchorsTSVOut.write(entity);
+                                anchorsTSVOut.write("\t");
+                                anchorsTSVOut.write(Integer.toString(count));
+                                anchorsTSVOut.write("\n");
+                                anchorsTSVOut.flush();
                             }
+                            sb.append(" ");
                         }
                     }
                 }
             }
-            dfMapReader.close();
+        }
+        dfMapReader.close();
         //}
 
         anchorsDataOut.close();
 
-        if( multiple_output ) {
+        if (multiple_output) {
             anchorsTSVOut.close();
         }
 
@@ -230,8 +267,8 @@ public class Datapack extends Configured implements Tool {
     public Datapack() {
     }
 
-    public static void main( String[] args ) throws Exception {
-        int res = ToolRunner.run( new Datapack(), args );
-        System.exit( res );
+    public static void main(String[] args) throws Exception {
+        int res = ToolRunner.run(new Datapack(), args);
+        System.exit(res);
     }
 }

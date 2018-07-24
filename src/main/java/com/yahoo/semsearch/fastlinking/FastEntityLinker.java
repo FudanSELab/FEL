@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import com.yahoo.semsearch.fastlinking.entityranker.CandidateRanker;
 import com.yahoo.semsearch.fastlinking.entityranker.EntityRelevanceJudgment;
@@ -92,7 +93,7 @@ public class FastEntityLinker {
     /**
      * Inner class to store partial ranking results, a span, the alias and the score
      */
-    public static class EntityResult implements Comparable<EntityResult> {
+    public static class EntityResult implements Comparable<EntityResult>, Cloneable {
         public Span s;
         public CharSequence text;
         public int id;
@@ -110,6 +111,17 @@ public class FastEntityLinker {
         @Override
         public int compareTo( EntityResult o ) {
             return -Double.compare( score, o.score );
+        }
+
+        @Override
+        public Object clone() {
+            EntityResult er = null;
+            try{
+                er = (EntityResult)super.clone();
+            }catch(CloneNotSupportedException e) {
+                e.printStackTrace();
+            }
+            return er;
         }
     }
 
@@ -429,6 +441,9 @@ public class FastEntityLinker {
                 CandidatesInfo infos = hash.getCandidatesInfo( text.toString() );
                 if( infos != null ) {
                     ArrayList<EntityScore> score = ranker.getTopKEntities( infos, context, q, ( j - i ), candidatesPerSpot );
+                    for (EntityScore es:score) {
+                        es.text = text.toString();
+                    }
                     allCandidates.addAll( score );
                 }
                 text.append( " " );
@@ -454,13 +469,22 @@ public class FastEntityLinker {
             EntityScore s = scores.get( i );
             CharSequence n = hash.getEntityName( s.entity.id );
             if( !Double.isNaN( s.score ) ) {
-                res.add( new EntityResult( new EntitySpan( query ), n, s.entity.id, s.score, s.entity.type ) );
+                res.add( new EntityResult( new EntitySpan( s.text ), n, s.entity.id, s.score, s.entity.type ) );
             } else {
                 k++;
             }
             i++;
         }
         return res;
+    }
+
+    public void setPath(String path) throws Exception {
+        this.hash = ( QuasiSuccinctEntityHash ) BinIO.loadObject( path );
+        this.ranker = new ProbabilityRanker( ( QuasiSuccinctEntityHash ) hash );
+        this.context = new EmptyContext();
+    }
+    public List<EntityResult> linkText(String text, int limit) {
+        return getResultsGreedy( text, limit );
     }
 
     /**
@@ -496,7 +520,7 @@ public class FastEntityLinker {
                 List<EntityResult> results = fel.getResultsGreedy( q, 50 );
                 //List<EntityResult> results = fel.getResults( q, threshold );
                 for( EntityResult er : results ) {
-                    System.out.println( q + "\t" + loc + "\t" + er.text + "\t" + er.score + "\t" + er.id );
+                    System.out.println( er.s.span + "\t" + loc + "\t" + er.text + "\t" + er.score + "\t" + er.id );
                 }
                 time += System.nanoTime();
                 System.out.println( "Time to rank and print the candidates:" + time / 1000000. + " ms" );
@@ -551,6 +575,7 @@ public class FastEntityLinker {
                 i++;
                 String parts[] = line.split( "\\t" );
                 if( !isANumber( parts[ 1 ] ) ) {
+
                     if( !parts[ 0 ].equals( previousQuery ) ) {
                         previousQuery = parts[ 0 ];
                         jugments = new ArrayList<EntityRelevanceJudgment>();
